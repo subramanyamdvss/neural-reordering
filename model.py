@@ -104,32 +104,32 @@ class WordReorderData(Dataset):
         self.lendict = {}
         self.dataset = []
         if not (os.path.isfile("fold2/"+root_dir+"dict.p") and os.path.isfile("fold2/"+root_dir+"data.p")):
-            	self.root_dir = "fold1"+'/'+root_dir
-        	j = 0
-        	lst = os.listdir(self.root_dir)
-        	splf = lst[0].split('.')
-        	self.dataset = np.load(open(self.root_dir+"/"+lst[0],'r'))
-        	self.dataset = np.array(self.dataset)
-        	tmp = np.arange(80-int(splf[1]))
-        	tmp.fill(0)
-            	tmp[0] = 2
-        	self.dataset = np.concatenate((self.dataset,tmp),0)
-        	self.dataset = [self.dataset]
-        	self.lendict[0] = int(splf[1])
-            	for f in lst[1:]:
-                    splf = f.split('.')
-        	    if int(splf[1]) != 0 :
-                    	self.lendict[j] = int(splf[1])
-                    	fl = np.load(open(self.root_dir+"/"+f,'r'))
-            	    	fl = np.array(fl)
-            	    	tmp = np.arange(80-int(splf[1]))
-            	    	tmp.fill(0)
-                    	if int(splf[1])!=80:
-				tmp[0] = 2
-			else:
-				fl[-1]=2
+            self.root_dir = "fold1"+'/'+root_dir
+            j = 0
+            lst = os.listdir(self.root_dir)
+            splf = lst[0].split('.')
+            self.dataset = np.load(open(self.root_dir+"/"+lst[0],'r'))
+            self.dataset = np.array(self.dataset)
+            tmp = np.arange(80-int(splf[1]))
+            tmp.fill(0)
+            tmp[0] = 2
+            self.dataset = np.concatenate((self.dataset,tmp),0)
+            self.dataset = [self.dataset]
+            self.lendict[0] = int(splf[1])
+            for f in lst[1:]:
+                splf = f.split('.')
+                if int(splf[1]) != 0 :
+                        self.lendict[j] = int(splf[1])
+                        fl = np.load(open(self.root_dir+"/"+f,'r'))
+                        fl = np.array(fl)
+                        tmp = np.arange(80-int(splf[1]))
+                        tmp.fill(0)
+                        if int(splf[1])!=80:
+                            tmp[0] = 2
+                        else:
+                            fl[-1]=2
                         bl = True
-                    	fl = np.concatenate((fl,tmp),0)
+                        fl = np.concatenate((fl,tmp),0)
                         for k in list(fl):
                             if k>=0 and k<=7999:
                                 continue
@@ -137,13 +137,13 @@ class WordReorderData(Dataset):
                                 bl = False
                                 break
                         if bl:
-                    		self.dataset.append(fl)
-                		print(j)
-                        	j = j+1
-        	self.dataset = torch.from_numpy(np.array(self.dataset))
-        	pickle.dump(self.lendict,open("fold2/"+root_dir+"dict.p",'w'))
-        	pickle.dump(self.dataset,open("fold2/"+root_dir+"data.p",'w'))
-        	self.ln = j
+                            self.dataset.append(fl)
+                        print(j)
+                        j = j+1
+            self.dataset = torch.from_numpy(np.array(self.dataset))
+            pickle.dump(self.lendict,open("fold2/"+root_dir+"dict.p",'w'))
+            pickle.dump(self.dataset,open("fold2/"+root_dir+"data.p",'w'))
+            self.ln = j
         else:
             self.dataset = pickle.load(open("fold2/"+root_dir+"data.p",'r'))
             self.lendict = pickle.load(open("fold2/"+root_dir+"dict.p",'r'))
