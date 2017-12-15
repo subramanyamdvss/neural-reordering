@@ -6,7 +6,7 @@ import torch.nn.functional as F
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 import pickle
-
+import gc
 hyper = {'temp':0.01,'lr':1,'numepochs':1000,'optim':'Adadelta','batchsize':32,'lrdecaystepsize':30,'lrdecay':0.1,'weightnorm':3}
 lcontrols = {'valstepsize':20,'savedir':'models/'}
 class Net(nn.Module):
@@ -17,7 +17,7 @@ class Net(nn.Module):
         self.embedding = nn.Embedding(8000,100)
         self.embedding.weight.requires_grad = False
         #load the weights from finwordvecs.npy
-        iniarr = np.load(open("finwordvecs.npy",'r'))
+        iniarr = np.load(open("finwordvecs.npy",'rb'))
         iniarr = torch.from_numpy(iniarr)
         normini = torch.norm(iniarr,p=2,dim=1,keepdim=True)
         iniarr.div_(normini)
@@ -108,7 +108,7 @@ class WordReorderData(Dataset):
             j = 0
             lst = os.listdir(self.root_dir)
             splf = lst[0].split('.')
-            self.dataset = np.load(open(self.root_dir+"/"+lst[0],'r'))
+            self.dataset = np.load(open(self.root_dir+"/"+lst[0],'rb'))
             self.dataset = np.array(self.dataset)
             tmp = np.arange(80-int(splf[1]))
             tmp.fill(0)
@@ -120,7 +120,7 @@ class WordReorderData(Dataset):
                 splf = f.split('.')
                 if int(splf[1]) != 0 :
                         self.lendict[j] = int(splf[1])
-                        fl = np.load(open(self.root_dir+"/"+f,'r'))
+                        fl = np.load(open(self.root_dir+"/"+f,'rb'))
                         fl = np.array(fl)
                         tmp = np.arange(80-int(splf[1]))
                         tmp.fill(0)
@@ -141,12 +141,12 @@ class WordReorderData(Dataset):
                         print(j)
                         j = j+1
             self.dataset = torch.from_numpy(np.array(self.dataset))
-            pickle.dump(self.lendict,open("fold2/"+root_dir+"dict.p",'w'))
-            pickle.dump(self.dataset,open("fold2/"+root_dir+"data.p",'w'))
+            pickle.dump(self.lendict,open("fold2/"+root_dir+"dict.p",'wb'))
+            pickle.dump(self.dataset,open("fold2/"+root_dir+"data.p",'wb'))
             self.ln = j
         else:
-            self.dataset = pickle.load(open("fold2/"+root_dir+"data.p",'r'))
-            self.lendict = pickle.load(open("fold2/"+root_dir+"dict.p",'r'))
+            self.dataset = pickle.load(open("fold2/"+root_dir+"data.p",'rb'))
+            self.lendict = pickle.load(open("fold2/"+root_dir+"dict.p",'rb'))
             self.ln = len(self.lendict)
     def __len__(self):
         return self.ln
@@ -171,7 +171,6 @@ valset = WordReorderData("val")
 testset = WordReorderData("test")
 
 net.cuda()
-
 #defining the optim function
 optimizer = torch.optim.Adadelta([p for p in net.parameters() if p.requires_grad], lr=hyper['lr'], rho=0.9, eps=1e-06, weight_decay=0)
 optimizer.zero_grad() 
@@ -202,14 +201,20 @@ def perfmetric(calcsent,instance):
         sb = calcsent[i,:leng[i]]-groundsent[i,:leng[i]]
         perf += (int(leng[i])-len(torch.nonzero(sb)))
     matches = perf
+    del groundsent
+    del leng
+    torch.cuda.empty_cache()
     return perf,tot
 
-def inference(instance):
+def inference(instance,val=False):
     #args shuffset-batchsizex80 groundsent-batchsizex80
     #returns calcsent,loss
-    groundsent = Variable(instance['groundsent'].cuda())
-    shuffsent = Variable(instance['shuffsent'].cuda())
-    leng = instance['len'].cuda()
+    if val:
+        groundsent = Variable(instance['groundsent'].cuda(),volatile = True)
+        shuffsent = Variable(instance['shuffsent'].cuda(),volatile = True)
+    else:
+        groundsent = Variable(instance['groundsent'].cuda())
+        shuffsent = Variable(instance['shuffsent'].cuda())
     x,calcsent = net.forward(shuffsent)
     calcsent.detach()
     #print(x.size(),groundsent.view(-1).size())
@@ -222,7 +227,7 @@ def validation():
     totperf = 0
     totmatches = 0
     for i_batch,sent_batch in enumerate(valloader):
-        calcsent,loss = inference(sent_batch)
+        calcsent,loss = inference(sent_batch,True)
         perf,tot = perfmetric(calcsent.view(hyper['batchsize'],-1),sent_batch)
         totloss+=loss
         totperf+=perf
@@ -244,9 +249,13 @@ f = open('val.log','a+')
 trperf = 0
 trtot = 0
 totloss= 0 
+net.train()
 for i_batch,sent_batch in enumerate(trainloader):
     
     if((i_batch+1)%nsteps == 0):
+        print("saving-model....")   
+        f.write("saving-model....")
+        torch.save(net.state_dict(),lcontrols['savedir']+'%d.model'%(vali))
         epoch+=1
         pall = trperf/float(trtot)
         totloss = float(totloss)/(nsteps-1)
@@ -255,23 +264,50 @@ for i_batch,sent_batch in enumerate(trainloader):
         #scheduler.step()
         if epoch%lcontrols['valstepsize']==0:
             #get validation bleu score.
+            net.eval()
             net.training = False
             pall,avgloss = validation()
             net.training = True
+            net.train()
             print("Validation-metrics-(vali,epoch,step,pall,avgloss)=(%d,%d,%d,%d,%d)"%(vali,epoch,i_batch,pall,avgloss))
             f.write("Validation-metrics-(vali,epoch,step,pall,avgloss)=(%d,%d,%d,%d,%d)"%(vali,epoch,i_batch,pall,avgloss))
-            print("saving-model....")   
-            f.write("saving-model....")
-            torch.save(net.state_dict(),lcontrols['savedir']+'%d.model'%(vali))
+            
             vali+=1
     print(epoch,i_batch)
-    calcsent,loss = inference(sent_batch)
-    perf,tot = perfmetric(calcsent.view(hyper['batchsize'],-1),sent_batch)
+    groundsent = sent_batch['groundsent'].cuda()
+    shuffsent = sent_batch['shuffsent'].cuda()
+    groundsent = Variable(groundsent)
+    shuffsent = Variable(shuffsent)
+    x,calcsent = net.forward(shuffsent)
+    #print(x.size(),groundsent.view(-1).size())
+    loss = F.cross_entropy(x,groundsent.view(-1),ignore_index=0)
+    j2 = groundsent.size()[-1]
+    leng = sent_batch['len'].cuda()
+    perf = 0    
+    calcsent = calcsent.data.view(hyper['batchsize'],-1)
+    tot =int(leng.sum())
+    for i in range(hyper['batchsize']):
+        #print(calcsent[i,:leng[i]].size(),groundsent[i,:leng[i]].size())
+        #print(type(calcsent[i,:leng[i]]),type(groundsent[i,:leng[i]]))
+        sb = calcsent[i,:leng[i]]-groundsent[i,:leng[i]].data
+        perf += (int(leng[i])-len(torch.nonzero(sb)))
+    matches = perf
     trperf+=perf
     trtot+=tot
-    totloss+=loss
+    totloss+=loss.data
     loss.backward()
     optimizer.step()
+    optimizer.zero_grad() 
+    # prints currently alive Tensors and Variables
+    # m  = 0
+    # try:
+    #     for obj in gc.get_objects():
+    #         if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
+    #             print(m,obj.__name__,type(obj), obj.size())
+    #             m+=1
+    # except Exception:
+    #     continue
+
     # if i_batch == 4:
     #     # print(shuffsent,groundsent)
     #     # print(shuffsent.size(),groundsent.size(),leng.size())
