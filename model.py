@@ -8,7 +8,8 @@ from torch.utils.data import Dataset, DataLoader
 import pickle
 import gc
 hyper = {'temp':0.01,'lr':1,'numepochs':1000,'optim':'Adadelta','batchsize':32,'lrdecaystepsize':30,'lrdecay':0.1,'weightnorm':3}
-lcontrols = {'valstepsize':20,'savedir':'models/'}
+lcontrols = {'valstepsize':20,'savedir':'models/','epoch':10000}
+torch.backends.cudnn.benchmark= True
 class Net(nn.Module):
 
     def __init__(self):
@@ -227,6 +228,8 @@ def validation():
     totperf = 0
     totmatches = 0
     for i_batch,sent_batch in enumerate(valloader):
+        if(len(sent_batch['len'])!=hyper['batchsize']):
+            continue
         calcsent,loss = inference(sent_batch,True)
         perf,tot = perfmetric(calcsent.view(hyper['batchsize'],-1),sent_batch)
         totloss+=loss
@@ -250,69 +253,73 @@ trperf = 0
 trtot = 0
 totloss= 0 
 net.train()
-for i_batch,sent_batch in enumerate(trainloader):
-    
-    if((i_batch+1)%nsteps == 0):
-        print("saving-model....")   
-        f.write("saving-model....")
-        torch.save(net.state_dict(),lcontrols['savedir']+'%d.model'%(vali))
+i_batch = 0
+for epoch in range(lcontrols['epoch']):
+    for j,sent_batch in enumerate(trainloader):
+        if(len(sent_batch['len'])!=hyper['batchsize']): 
+            continue
+        
+        groundsent = sent_batch['groundsent'].cuda()
+        shuffsent = sent_batch['shuffsent'].cuda()
+        groundsent = Variable(groundsent)
+        shuffsent = Variable(shuffsent)
+        x,calcsent = net.forward(shuffsent)
+        #print(x.size(),groundsent.view(-1).size())
+        loss = F.cross_entropy(x,groundsent.view(-1),ignore_index=0)
+        j2 = groundsent.size()[-1]
+        leng = sent_batch['len'].cuda()
+        perf = 0    
+        calcsent = calcsent.data.view(hyper['batchsize'],-1)
+        tot =int(leng.sum())
+        for i in range(hyper['batchsize']):
+            #print(calcsent[i,:leng[i]].size(),groundsent[i,:leng[i]].size())
+            #print(type(calcsent[i,:leng[i]]),type(groundsent[i,:leng[i]]))
+            sb = calcsent[i,:leng[i]]-groundsent[i,:leng[i]].data
+            perf += (int(leng[i])-len(torch.nonzero(sb)))
+        matches = perf
+        trperf+=perf
+        trtot+=tot
+        totloss+=loss.data
+        loss.backward()
+        optimizer.step()
+        optimizer.zero_grad() 
+        i_batch+=1
+        print(epoch,i_batch,loss)
+        # prints currently alive Tensors and Variables
+        # m  = 0
+        # try:
+        #     for obj in gc.get_objects():
+        #         if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
+        #             print(m,obj.__name__,type(obj), obj.size())
+        #             m+=1
+        # except Exception:
+        #     continue
+
+        # if i_batch == 4:
+        #     # print(shuffsent,groundsent)
+        #     # print(shuffsent.size(),groundsent.size(),leng.size())
+        #     # print(perfmetric(shuffsent,sent_batch))
+        #     # calcsent,loss = inference(sent_batch)
+        #     # print(calcsent,loss)
+        #     print(trainset[len(trainset)-1]['groundsent'])
+        #     break
+    if(1):
         epoch+=1
-        pall = trperf/float(trtot)
-        totloss = float(totloss)/(nsteps-1)
-        print("Training-metrics-(epoch,step,pall,avgloss)=(%d,%d,%d,%d)"%(epoch,i_batch,pall,totloss))
-        f.write("Training-metrics-(epoch,step,pall,avgloss)=(%d,%d,%d,%d)"%(epoch,i_batch,pall,totloss))
+        pall = trperf/max(float(trtot),1e-8)
+        totloss = float(totloss)/max(1e-8,(nsteps-1))
+        print("Training-metrics-(epoch,step,pall,avgloss)=(%d,%d,%f,%f)"%(epoch,i_batch,pall,totloss))
+        f.write("Training-metrics-(epoch,step,pall,avgloss)=(%d,%d,%f,%f)"%(epoch,i_batch,pall,totloss))
         #scheduler.step()
-        if epoch%lcontrols['valstepsize']==0:
+        if epoch%lcontrols['valstepsize']!=0:
             #get validation bleu score.
             net.eval()
             net.training = False
             pall,avgloss = validation()
             net.training = True
             net.train()
-            print("Validation-metrics-(vali,epoch,step,pall,avgloss)=(%d,%d,%d,%d,%d)"%(vali,epoch,i_batch,pall,avgloss))
-            f.write("Validation-metrics-(vali,epoch,step,pall,avgloss)=(%d,%d,%d,%d,%d)"%(vali,epoch,i_batch,pall,avgloss))
-            
+            print("Validation-metrics-(vali,epoch,step,pall,avgloss)=(%d,%d,%d,%f,%f)"%(vali,epoch,i_batch,pall,avgloss))
+            f.write("Validation-metrics-(vali,epoch,step,pall,avgloss)=(%d,%d,%d,%f,%f)"%(vali,epoch,i_batch,pall,avgloss))
+            print("saving-model....")   
+            f.write("saving-model....")
+            torch.save(net.state_dict(),lcontrols['savedir']+'%d-%f-%f.model'%(vali,pall,avgloss))
             vali+=1
-    print(epoch,i_batch)
-    groundsent = sent_batch['groundsent'].cuda()
-    shuffsent = sent_batch['shuffsent'].cuda()
-    groundsent = Variable(groundsent)
-    shuffsent = Variable(shuffsent)
-    x,calcsent = net.forward(shuffsent)
-    #print(x.size(),groundsent.view(-1).size())
-    loss = F.cross_entropy(x,groundsent.view(-1),ignore_index=0)
-    j2 = groundsent.size()[-1]
-    leng = sent_batch['len'].cuda()
-    perf = 0    
-    calcsent = calcsent.data.view(hyper['batchsize'],-1)
-    tot =int(leng.sum())
-    for i in range(hyper['batchsize']):
-        #print(calcsent[i,:leng[i]].size(),groundsent[i,:leng[i]].size())
-        #print(type(calcsent[i,:leng[i]]),type(groundsent[i,:leng[i]]))
-        sb = calcsent[i,:leng[i]]-groundsent[i,:leng[i]].data
-        perf += (int(leng[i])-len(torch.nonzero(sb)))
-    matches = perf
-    trperf+=perf
-    trtot+=tot
-    totloss+=loss.data
-    loss.backward()
-    optimizer.step()
-    optimizer.zero_grad() 
-    # prints currently alive Tensors and Variables
-    # m  = 0
-    # try:
-    #     for obj in gc.get_objects():
-    #         if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
-    #             print(m,obj.__name__,type(obj), obj.size())
-    #             m+=1
-    # except Exception:
-    #     continue
-
-    # if i_batch == 4:
-    #     # print(shuffsent,groundsent)
-    #     # print(shuffsent.size(),groundsent.size(),leng.size())
-    #     # print(perfmetric(shuffsent,sent_batch))
-    #     # calcsent,loss = inference(sent_batch)
-    #     # print(calcsent,loss)
-    #     print(trainset[len(trainset)-1]['groundsent'])
-    #     break
