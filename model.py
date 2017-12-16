@@ -7,8 +7,8 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 import pickle
 import gc
-hyper = {'temp':0.01,'lr':1,'numepochs':1000,'optim':'Adadelta','batchsize':32,'lrdecaystepsize':30,'lrdecay':0.1,'weightnorm':3}
-lcontrols = {'valstepsize':20,'savedir':'models/','epoch':10000}
+hyper = {'temp':0.01,'lr':0.1,'numepochs':1000,'optim':'Adadelta','batchsize':32,'lrdecaystepsize':30,'lrdecay':0.1,'weightnorm':3}
+lcontrols = {'valstepsize':20,'savedir':'models2/','epoch':10000}
 torch.backends.cudnn.benchmark= True
 class Net(nn.Module):
 
@@ -16,7 +16,7 @@ class Net(nn.Module):
         super(Net, self).__init__()
         #self.weight = Parameter(torch.Tensor(num_embeddings, embedding_dim))--this is how embeddings are defined.
         self.embedding = nn.Embedding(8000,100)
-        self.embedding.weight.requires_grad = False
+        self.embedding.weight.requires_grad = True
         #load the weights from finwordvecs.npy
         iniarr = np.load(open("finwordvecs.npy",'rb'))
         iniarr = torch.from_numpy(iniarr)
@@ -40,7 +40,7 @@ class Net(nn.Module):
         # here a squeeze(input,1) is used
         # here a nn.F.normalize is used
         self.fc = nn.Linear(100,8000,bias=False)
-        self.fc.weight.requires_grad = False
+        self.fc.weight.requires_grad = True
         self.fc.weight.data.copy_(iniarr)
         #by now output would be bx80x8000
         #apply view(-1,8000)
@@ -64,23 +64,23 @@ class Net(nn.Module):
         #x will be of size batchsizex80
         #embed bx80 to bx80x100
         #dropout  -- torch.nn.functional.dropout(input, p=0.5, training=False, inplace=False)
-        x = self.embedding(x)
+        x = F.relu(self.embedding(x))
         x = torch.unsqueeze(x,1)
-        x = F.dropout(x,p = 0.8,training = self.training)
+        x = F.dropout(x,p = 0.9,training = self.training)
         #conv1
         x = F.relu(self.conv1(x))
-        x = F.dropout(x,p = 0.8,training = self.training)
+        x = F.dropout(x,p = 0.9,training = self.training)
         x = F.relu(self.conv2(x))
-        x = F.dropout(x,p = 0.5,training = self.training)
+        x = F.dropout(x,p = 0.7,training = self.training)
         x = F.relu(self.conv3(x))
-        x = F.dropout(x,p = 0.8,training = self.training)
+        x = F.dropout(x,p = 0.9,training = self.training)
         x = F.relu(self.deconv1(x))
-        x = F.dropout(x,p = 0.8,training = self.training)
+        x = F.dropout(x,p = 0.9,training = self.training)
         x = F.relu(self.deconv2(x))
-        x = F.dropout(x,p = 0.8,training = self.training)
+        x = F.dropout(x,p = 0.9,training = self.training)
         x = F.relu(self.deconv3(x))
         x = torch.squeeze(x,dim=1)
-        x = F.normalize(x,dim=2)
+        #x = F.normalize(x,dim=2)
         x = self.fc(x)
         x = x.view(-1,8000)
         x = x.div(hyper['temp'])
@@ -248,7 +248,7 @@ def l2constraint(modu):
         modu.weight = modu.weight.div(cn.expand_as(modu.weight))
 
 
-f = open('val.log','a+')
+f = open('val.log','w+')
 trperf = 0
 trtot = 0
 totloss= 0 
@@ -284,7 +284,7 @@ for epoch in range(lcontrols['epoch']):
         optimizer.step()
         optimizer.zero_grad() 
         i_batch+=1
-        print(epoch,i_batch,loss)
+        print(epoch,i_batch,loss.data)
         # prints currently alive Tensors and Variables
         # m  = 0
         # try:
@@ -310,7 +310,7 @@ for epoch in range(lcontrols['epoch']):
         print("Training-metrics-(epoch,step,pall,avgloss)=(%d,%d,%f,%f)"%(epoch,i_batch,pall,totloss))
         f.write("Training-metrics-(epoch,step,pall,avgloss)=(%d,%d,%f,%f)"%(epoch,i_batch,pall,totloss))
         #scheduler.step()
-        if epoch%lcontrols['valstepsize']!=0:
+        if epoch%lcontrols['valstepsize']==0:
             #get validation bleu score.
             net.eval()
             net.training = False
