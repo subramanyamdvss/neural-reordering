@@ -9,7 +9,7 @@ import pickle
 import gc
 import math
 hyper = {'temp':0.01,'lr':0.1,'numepochs':1000,'optim':'momentum','batchsize':32,'lrdecaystepsize':30,'lrdecay':0.1,'weightnorm':3,'momentum':0.9,'weightdecay':0.0}
-lcontrols = {'valstepsize':20,'savedir':'models2/','epoch':2}
+lcontrols = {'valstepsize':20,'savedir':'models2/','epoch':10000}
 torch.backends.cudnn.benchmark= True
 
 def weightini(modules,nl):
@@ -198,7 +198,7 @@ batchsize = hyper['batchsize']
 def perfmetric(calcsent,instance):
     #p-all
     #args-calcsent-batchsizex80 groundsent-batchsizex80
-    groundsent = instance['groundsent'].cuda()
+    groundsent = instance['groundtruth'].cuda()
     j2 = groundsent.size()[-1]
     leng = instance['len'].cuda()
     perf = 0
@@ -226,8 +226,9 @@ def inference(instance,val=False):
         shuffsent = Variable(instance['shuffsent'].cuda())
     x,calcsent = net.forward(shuffsent)
     calcsent.detach()
+    x.detach()
     #print(x.size(),groundsent.view(-1).size())
-    loss = F.cross_entropy(x,groundsent.view(-1),ignore_index=0)
+    loss = criterion(x,groundsent.view(-1))
     return calcsent,loss
 
 def validation():
@@ -238,14 +239,32 @@ def validation():
     for i_batch,sent_batch in enumerate(valloader):
         if(len(sent_batch['len'])!=hyper['batchsize']):
             continue
-        calcsent,loss = inference(sent_batch,True)
-        perf,tot = perfmetric(calcsent.view(hyper['batchsize'],-1),sent_batch)
-        totloss+=loss
+        groundsent = sent_batch['groundsent'].cuda()
+        shuffsent = sent_batch['shuffsent'].cuda()
+        groundtruth = sent_batch['groundtruth'].cuda()
+        groundsent = Variable(groundsent)
+        shuffsent = Variable(shuffsent)
+        groundtruth = Variable(groundtruth)
+        x,calcsent = net.forward(shuffsent)
+        #print(x.size(),groundsent.view(-1).size())
+        #x->32x81 groundtruth.view(-1)->32*81
+        loss = criterion(x,groundtruth.view(-1))
+        j2 = groundsent.size()[-1]
+        leng = sent_batch['len'].cuda()
+        perf = 0    
+        calcsent = calcsent.data.view(hyper['batchsize'],-1)
+        tot =int(leng.sum())
+        for i in range(hyper['batchsize']):
+            #print(calcsent[i,:leng[i]].size(),groundsent[i,:leng[i]].size())
+            #print(type(calcsent[i,:leng[i]]),type(groundsent[i,:leng[i]]))
+            sb = calcsent[i,:leng[i]]-groundtruth[i,:leng[i]].data
+            perf += (int(leng[i])-len(torch.nonzero(sb)))
+        matches = perf
+        # perf,tot = perfmetric(calcsent.view(hyper['batchsize'],-1),sent_batch)
+        totloss+=float(loss.data)
         totperf+=perf
         totmatches+=tot
-        if(i_batch==2*nsteps):
-            break
-    return float(totperf)/totmatches,float(totloss)/(2*nsteps)
+    return float(totperf)/totmatches,float(totloss)/(i_batch)
 
 
 
@@ -263,7 +282,10 @@ trtot = 0
 totloss= 0 
 net.train()
 i_batch = 0
+travgloss = 0.0
+travgperf = 0.0
 for epoch in range(lcontrols['epoch']):
+    
     for j,sent_batch in enumerate(trainloader):
         if(len(sent_batch['len'])!=hyper['batchsize']): 
             continue
@@ -300,6 +322,8 @@ for epoch in range(lcontrols['epoch']):
         optimizer.zero_grad() 
         i_batch+=1
         print("(epoch,step,loss,perf,avgloss,avgperf)",epoch,i_batch,float(loss.data),perf,avgloss,avgperf)
+        travgloss = avgloss
+        travgperf = avgperf
         # prints currently alive Tensors and Variables
         # m  = 0
         # try:
@@ -324,8 +348,9 @@ for epoch in range(lcontrols['epoch']):
         epoch+=1
         
         #scheduler.step()
-        if epoch%lcontrols['valstepsize']==0:
+        if epoch%lcontrols['valstepsize']!=0:
             #get validation bleu score.
+            
             net.eval()
             net.training = False
             pall,avgloss = validation()
@@ -335,5 +360,5 @@ for epoch in range(lcontrols['epoch']):
             f.write("Validation-metrics-(vali,epoch,step,pall,avgloss)=(%d,%d,%d,%f,%f)"%(vali,epoch,i_batch,pall,avgloss))
             print("saving-model....")   
             f.write("saving-model....")
-            torch.save(net.state_dict(),lcontrols['savedir']+'%d-%f-%f.model4'%(vali,pall,avgloss))
+            torch.save(net.state_dict(),lcontrols['savedir']+'%d-train-%f-%f-val-%f-%f.model4'%(vali,travgperf,travgloss,pall,avgloss))
             vali+=1
