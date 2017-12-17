@@ -8,8 +8,8 @@ from torch.utils.data import Dataset, DataLoader
 import pickle
 import gc
 import math
-hyper = {'temp':0.01,'lr':0.1,'numepochs':1000,'optim':'momentum','batchsize':32,'lrdecaystepsize':30,'lrdecay':0.1,'weightnorm':3,'momentum':0.9,'weightdecay':0.0}
-lcontrols = {'valstepsize':20,'savedir':'models2/','epoch':10000}
+hyper = {'temp':0.01,'lr':0.07,'numepochs':1000,'optim':'momentum','batchsize':32,'lrdecaystepsize':30,'lrdecay':0.5,'weightnorm':3,'momentum':0.9,'weightdecay':0.0}
+lcontrols = {'valstepsize':10,'savedir':'models2/','epoch':10000,'PATH':'models2/22-train-0.073201-0.879936-val-0.084457-0.866586.model4'}
 torch.backends.cudnn.benchmark= True
 
 def weightini(modules,nl):
@@ -97,6 +97,7 @@ class Net(nn.Module):
     
 
 net = Net()
+# net.load_state_dict(torch.load(lcontrols['PATH']))
 net.zero_grad()
 
 #defining the loss function
@@ -161,8 +162,6 @@ class WordReorderData(Dataset):
 
     def __getitem__(self, idx):
         grsent = self.dataset[idx]
-        if(idx == 88833):
-            print(self.lendict[idx],grsent)
         rnd = torch.randperm(self.lendict[idx])
         _,indices = torch.sort(rnd)
         shuffsent = torch.index_select(grsent[:self.lendict[idx]], 0, rnd, out=None)
@@ -180,6 +179,7 @@ valset = WordReorderData("val")
 testset = WordReorderData("test")
 
 net.cuda()
+
 # #defining the optim function
 optimizer = torch.optim.SGD(net.parameters(), lr=hyper['lr'],momentum=hyper['momentum'], weight_decay=hyper['weightdecay'])
 optimizer.zero_grad() 
@@ -348,7 +348,7 @@ for epoch in range(lcontrols['epoch']):
         epoch+=1
         
         #scheduler.step()
-        if epoch%lcontrols['valstepsize']!=0:
+        if epoch%lcontrols['valstepsize']==0:
             #get validation bleu score.
             
             net.eval()
@@ -360,5 +360,9 @@ for epoch in range(lcontrols['epoch']):
             f.write("Validation-metrics-(vali,epoch,step,pall,avgloss)=(%d,%d,%d,%f,%f)"%(vali,epoch,i_batch,pall,avgloss))
             print("saving-model....")   
             f.write("saving-model....")
-            torch.save(net.state_dict(),lcontrols['savedir']+'%d-train-%f-%f-val-%f-%f.model4'%(vali,travgperf,travgloss,pall,avgloss))
+            torch.save(net.state_dict(),lcontrols['savedir']+'%d-train-%f-%f-val-%f-%f.model5'%(vali,travgperf,travgloss,pall,avgloss))
             vali+=1
+        trperf = 0
+        trtot = 0
+        totloss= 0 
+        scheduler.step()
